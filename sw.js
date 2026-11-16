@@ -1,10 +1,10 @@
 /* Service Worker – Vokabeln mit Mio
    Muster wie Familienbank: versionierter Cache, Network-First mit Cache-Fallback,
    fremde Server (CDN usw.) werden nie gecacht, Update per Banner "Jetzt aktualisieren". */
-const CACHE_NAME = 'mio-vokabeln-v1';
+const CACHE_NAME = 'mio-vokabeln-v2';
 const ASSETS = ['./', './index.html', './manifest.webmanifest',
-  './icons/icon-192.png', './icons/icon-512.png', './icons/icon-maskable-512.png',
-  './icons/apple-touch-icon.png', './icons/favicon-64.png'];
+  './icon-192.png', './icon-512.png', './icon-maskable-512.png',
+  './apple-touch-icon.png', './favicon-64.png'];
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS)));
