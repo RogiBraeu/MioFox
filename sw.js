@@ -1,7 +1,7 @@
 /* Service Worker – Vokabeln mit Mio
    Muster wie Familienbank: versionierter Cache, Network-First mit Cache-Fallback,
    fremde Server (CDN usw.) werden nie gecacht, Update per Banner "Jetzt aktualisieren". */
-const CACHE_NAME = 'mio-vokabeln-v2';
+const CACHE_NAME = 'mio-vokabeln-v3';
 const ASSETS = ['./', './index.html', './manifest.webmanifest',
   './icon-192.png', './icon-512.png', './icon-maskable-512.png',
   './apple-touch-icon.png', './favicon-64.png'];

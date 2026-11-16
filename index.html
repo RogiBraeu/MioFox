@@ -233,6 +233,15 @@ body.in-lesson .pwa-banner { display: none; }
   padding: 8px; margin-top: 10px; background: #fff; color: var(--ink); word-break: break-all; resize: vertical; }
 .bk-err { color: var(--bad-dark); font-weight: 700; min-height: 1em; }
 
+/* Stimmenauswahl */
+.voice-row { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; background: var(--card); border: 2px solid var(--line);
+  border-radius: 12px; padding: 10px 12px; margin-top: 8px; min-height: 58px; }
+.voice-row.on { border-color: var(--ok); background: var(--ok-bg); }
+.vr-check { width: 22px; font-weight: 800; color: var(--ok-dark); font-size: 20px; text-align: center; }
+.vr-txt { flex: 1; display: flex; flex-direction: column; }
+.vr-txt b { font-size: 18px; } .vr-txt span { font-size: 14px; color: var(--muted); }
+.vr-play { width: 38px; height: 38px; border-radius: 50%; background: var(--say-bg); display: flex; align-items: center; justify-content: center; font-size: 15px; }
+
 .top { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 .brand { flex: 1; font-weight: 800; font-size: 20px; line-height: 1.15; }
 .pill { font-weight: 800; background: var(--card); border-radius: 99px; padding: 6px 12px; box-shadow: 0 2px 0 var(--line); font-size: 18px; }
@@ -263,7 +272,7 @@ body.in-lesson .pwa-banner { display: none; }
 <div class="wrap" id="app"></div>
 <div id="lesson" hidden></div>
 <script>
-const APP_VERSION = "2";
+const APP_VERSION = "3";
 /* =====================================================================
    VOKABELN
    ---------------------------------------------------------------------
@@ -452,7 +461,7 @@ const Store = {
   key: "vokabeln", data: null,
   defaults() {
     return { v: 1, words: {}, xp: 0, streak: 0, lastLessonDay: null, lastPlayDay: null,
-      packsDone: {}, settings: { sound: true, speech: true }, app: {} };
+      packsDone: {}, settings: { sound: true, speech: true, voice: null }, app: {} };
   },
   load(key) {
     this.key = key;
@@ -654,16 +663,38 @@ const Sound = {
 
 /* ---------- Vorlesen (Sprachausgabe des Handys) ---------- */
 const Speech = {
-  voice: null,
+  voice: null, listeners: [],
   get ok() { return "speechSynthesis" in window && typeof SpeechSynthesisUtterance !== "undefined"; },
+  /* Spaß-Stimmen von Apple/macOS, die für Vokabeln ungeeignet sind */
+  NOVELTY: /^(Albert|Bad News|Bahh|Bells|Boing|Bubbles|Cellos|Deranged|Good News|Hysterical|Jester|Organ|Pipe Organ|Superstar|Trinoids|Whisper|Wobble|Zarvox|Ralph|Fred|Junior|Kathy|Princess|Grandma|Grandpa|Eddy|Flo|Reed|Rocko|Sandy|Shelley)\b/i,
+  LANGS: { "en-GB": "Britisch", "en-US": "Amerikanisch", "en-AU": "Australisch", "en-IE": "Irisch", "en-IN": "Indisch", "en-ZA": "Südafrikanisch", "en-CA": "Kanadisch", "en-NZ": "Neuseeländisch", "en-SC": "Schottisch" },
+  english() {
+    if (!this.ok) return [];
+    return speechSynthesis.getVoices().filter(v => /^en([-_]|$)/i.test(v.lang) && !this.NOVELTY.test(v.name));
+  },
+  /* Qualität schätzen: bessere Stimmen und britisches Englisch zuerst */
+  score(v) {
+    let s = 0;
+    const lang = v.lang.replace("_", "-");
+    if (/^en-GB/i.test(lang)) s += 30; else if (/^en-US/i.test(lang)) s += 18; else s += 8;
+    if (/premium|enhanced|natural|neural|wavenet|erweitert|siri/i.test(v.name)) s += 40;
+    if (/^(Daniel|Serena|Kate|Arthur|Martha|Oliver|Stephanie|Jamie)\b/i.test(v.name)) s += 12;
+    if (/Google UK English/i.test(v.name)) s += 20;
+    if (v.localService) s += 10; // funktioniert auch ohne Internet
+    if (v.default) s += 2;
+    return s;
+  },
+  sorted() { return this.english().sort((a, b) => this.score(b) - this.score(a)); },
+  choose() {
+    const list = this.sorted();
+    const want = Store.data && Store.data.settings.voice;
+    this.voice = (want && list.find(v => v.voiceURI === want)) || list[0] || null;
+  },
   init() {
     if (!this.ok) return;
-    const choose = () => {
-      const vs = speechSynthesis.getVoices();
-      this.voice = vs.find(v => /en[-_]GB/i.test(v.lang)) || vs.find(v => /^en/i.test(v.lang)) || null;
-    };
-    choose();
-    try { speechSynthesis.addEventListener("voiceschanged", choose); } catch (e) { speechSynthesis.onvoiceschanged = choose; }
+    const upd = () => { this.choose(); this.listeners.forEach(f => f()); };
+    upd();
+    try { speechSynthesis.addEventListener("voiceschanged", upd); } catch (e) { speechSynthesis.onvoiceschanged = upd; }
   },
   say(text, slow) {
     if (!this.ok || !Store.data.settings.speech) return;
@@ -676,7 +707,45 @@ const Speech = {
       speechSynthesis.speak(u);
     } catch (e) {}
   },
-  btn(text, cls) { return this.ok && Store.data.settings.speech ? `<button class="say ${cls || ""}" data-say="${U.esc(text)}" aria-label="Vorlesen">🔊</button>` : ""; }
+  btn(text, cls) { return this.ok && Store.data.settings.speech ? `<button class="say ${cls || ""}" data-say="${U.esc(text)}" aria-label="Vorlesen">🔊</button>` : ""; },
+
+  /* ---------- Stimmenauswahl für die Einstellungen ---------- */
+  SAMPLE: "Hello! I'm Mio. Let's learn English together!",
+  label(v) {
+    const lang = v.lang.replace("_", "-");
+    const name = v.name.replace(/^(Microsoft|Google|Apple)\s+/i, "").replace(/\s*\((Natural|Online)[^)]*\)/gi, "").replace(/\s+-\s+English.*$/i, "");
+    return { name, lang: this.LANGS[lang] || "Englisch", good: /premium|enhanced|natural|neural|erweitert/i.test(v.name), online: !v.localService };
+  },
+  section() {
+    return `<section class="card voices"><p class="bk-title">🗣️ Stimme zum Vorlesen</p>
+      <p class="small">Tippe auf eine Stimme, um sie zu hören und auszuwählen.</p>
+      <div data-voice-list></div></section>`;
+  },
+  bindSettings(root) {
+    const box = root.querySelector("[data-voice-list]");
+    if (!box) return;
+    const draw = () => {
+      if (!box.isConnected) return;
+      if (!this.ok) { box.innerHTML = `<p class="small">Dieses Gerät kann leider nicht vorlesen.</p>`; return; }
+      const list = this.sorted();
+      if (!list.length) { box.innerHTML = `<p class="small">Stimmen werden geladen … Falls hier nichts erscheint, hat dieses Gerät keine englische Stimme.</p>`; return; }
+      const chosen = Store.data.settings.voice || "";
+      const auto = list[0];
+      const row = (id, title, sub, on) => `<button class="voice-row ${on ? "on" : ""}" data-voice="${U.esc(id)}">
+        <span class="vr-check">${on ? "✓" : ""}</span><span class="vr-txt"><b>${U.esc(title)}</b><span>${U.esc(sub)}</span></span><span class="vr-play">▶</span></button>`;
+      box.innerHTML = row("", "Automatisch", `beste Stimme: ${this.label(auto).name}`, !chosen || !list.some(v => v.voiceURI === chosen)) +
+        list.map(v => { const l = this.label(v);
+          return row(v.voiceURI, l.name, l.lang + (l.good ? " · beste Qualität" : "") + (l.online ? " · braucht Internet" : ""), v.voiceURI === chosen); }).join("");
+      box.querySelectorAll("[data-voice]").forEach(b => b.onclick = () => {
+        Store.data.settings.voice = b.dataset.voice || null; Store.save();
+        this.choose(); draw();
+        const was = Store.data.settings.speech; Store.data.settings.speech = true; this.say(this.SAMPLE); Store.data.settings.speech = was;
+      });
+    };
+    draw();
+    this.listeners = this.listeners.filter(f => f.box && f.box.isConnected);
+    const f = () => draw(); f.box = box; this.listeners.push(f);
+  }
 };
 
 /* ---------- Konfetti ---------- */
@@ -793,7 +862,8 @@ const Lesson = {
     try { if (Speech.ok) speechSynthesis.cancel(); } catch (e) {}
     this.root.hidden = true; this.root.innerHTML = "";
     document.body.classList.remove("in-lesson");
-    const res = { completed, xp: this.st.xp, plan: this.plan, learned: this.st.learnedNow, reviewed: [...this.st.reviewed.keys()] };
+    const res = { completed, xp: this.st.xp, plan: this.plan, learned: this.st.learnedNow, reviewed: [...this.st.reviewed.keys()],
+      mistakes: this.st.answered - this.st.correctFirst };
     if (this.opts.onClose) this.opts.onClose(res);
   },
 
@@ -1600,8 +1670,8 @@ const App = {
       <section class="card">
         <div class="toggle-row">Töne <button class="switch ${s.sound ? "on" : ""}" data-toggle="sound" aria-label="Töne"></button></div>
         <div class="toggle-row">Vorlesen <button class="switch ${s.speech ? "on" : ""}" data-toggle="speech" aria-label="Vorlesen"></button></div>
-        ${Speech.ok ? `<button class="btn" data-testsay>🔊 Vorlesen testen</button>` : `<p class="small">Dieses Handy kann leider nicht vorlesen.</p>`}
       </section>
+      ${Store.data.settings.speech ? Speech.section() : ""}
       <section class="card">
         <p class="small">Dein Fortschritt wird nur auf diesem Handy gespeichert. Es gibt kein Login und es werden keine Daten verschickt.</p>
         <button class="btn" data-reset>Fortschritt löschen</button>
@@ -1639,6 +1709,7 @@ const App = {
       d.querySelector("[data-yes]").onclick = () => { Store.reset(); this.view = "home"; this.render(); };
     };
     PWA.bindBackup(app);
+    Speech.bindSettings(app);
     const sk = app.querySelector("[data-skipday]");
     if (sk) sk.onclick = () => { TestTools.skipDay(); sk.textContent = "✓ Ein Tag vorgespult"; };
   }
